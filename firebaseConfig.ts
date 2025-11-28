@@ -1,20 +1,16 @@
+
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 
-// TODO: Replace the following with your app's Firebase project configuration
-// See: https://firebase.google.com/docs/web/learn-more#config-object
+// 您提供的 Firebase 設定
 const firebaseConfig = {
-  // ⚠️ 警告：請在此處填入您的 Firebase Config
-  // 1. 前往 https://console.firebase.google.com/
-  // 2. 建立新專案
-  // 3. 新增 Web App
-  // 4. 複製 config 貼上到這裡
-  apiKey: "YOUR_API_KEY_HERE",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.appspot.com",
-  messagingSenderId: "SENDER_ID",
-  appId: "APP_ID"
+  apiKey: "AIzaSyCXEXVv1ndYULRxjR6ZOfy3t19RgLUvvfU",
+  authDomain: "yoga-pwa-158e2.firebaseapp.com",
+  projectId: "yoga-pwa-158e2",
+  storageBucket: "yoga-pwa-158e2.firebasestorage.app",
+  messagingSenderId: "411698774220",
+  appId: "1:411698774220:web:4a7e9760e6a1d39504c269",
+  measurementId: "G-2LSMZXCKTE"
 };
 
 // Initialize Firebase

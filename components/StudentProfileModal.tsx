@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { useApp } from '../contexts/AppContext';
 import { X, User as UserIcon, CreditCard, Calendar, Trash2, MapPin } from 'lucide-react';
@@ -13,8 +14,14 @@ export const StudentProfileModal: React.FC<Props> = ({ onClose }) => {
   const liveStudentData = students.find(s => s.id === currentUser.id) || currentUser;
   const hasPaid = liveStudentData.hasPaid;
 
-  // Get user's enrolled classes
-  const myClasses = classes.filter(c => c.enrolledUserIds.includes(currentUser.id));
+  // Get user's enrolled classes and sort by upcoming date
+  const myClasses = classes
+    .filter(c => c.enrolledUserIds.includes(currentUser.id))
+    .sort((a, b) => {
+        const dateA = getNextClassDate(a.dayOfWeek, a.startTimeStr).getTime();
+        const dateB = getNextClassDate(b.dayOfWeek, b.startTimeStr).getTime();
+        return dateA - dateB;
+    });
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">

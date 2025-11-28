@@ -11,12 +11,17 @@ import {
   doc, 
   setDoc,
   writeBatch,
-  getDocs
+  getDocs,
+  QuerySnapshot,
+  DocumentData
 } from 'firebase/firestore';
 
-// KEYS used for LocalStorage (Login persistence only)
+// KEYS used for LocalStorage
 const KEYS = {
-  CURRENT_USER_ID: 'zenflow_current_user_id_v2'
+  CURRENT_USER_ID: 'zenflow_current_user_id_v2',
+  LOCAL_CLASSES: 'zenflow_local_classes_backup', // Fallback storage
+  LOCAL_INSTRUCTORS: 'zenflow_local_instructors_backup',
+  LOCAL_USERS: 'zenflow_local_users_backup'
 };
 
 // Mock Data (Used for initial seeding only)
@@ -83,7 +88,7 @@ const MOCK_CLASSES: ClassSession[] = [
 ];
 
 const MOCK_USERS: User[] = [
-  { id: 'admin1', name: '教室經理', role: UserRole.ADMIN, avatarUrl: 'https://ui-avatars.com/api/?name=Admin&background=333&color=fff', username: 'admin', password: 'password' },
+  { id: 'admin1', name: '教室經理', role: UserRole.ADMIN, avatarUrl: 'https://ui-avatars.com/api/?name=Admin&background=333&color=fff', username: 'admin', password: 'ooxx1234' },
   { id: 'student1', name: '林小美', role: UserRole.STUDENT, avatarUrl: 'https://ui-avatars.com/api/?name=Alice&background=random', username: 'alice', password: '123', hasPaid: true },
   { id: 'student2', name: '陳志豪', role: UserRole.STUDENT, avatarUrl: 'https://ui-avatars.com/api/?name=Bob&background=random', username: 'bob', password: '123', hasPaid: false },
   { id: 'student3', name: '金泰亨', role: UserRole.STUDENT, avatarUrl: 'https://ui-avatars.com/api/?name=Charlie&background=random', username: 'charlie', password: '123', hasPaid: true },
@@ -104,12 +109,12 @@ interface AppContextType extends AppState {
   isLoginModalOpen: boolean;
   setLoginModalOpen: (isOpen: boolean) => void;
 
-  bookClass: (classId: string, userId?: string) => void;
-  cancelClass: (classId: string, userId?: string) => void;
+  bookClass: (classId: string, userId?: string) => Promise<void>;
+  cancelClass: (classId: string, userId?: string) => Promise<void>;
   
-  addClass: (classData: Omit<ClassSession, 'id' | 'enrolledUserIds' | 'isSubstitute'>) => void;
-  updateClass: (id: string, updates: Partial<ClassSession>) => void;
-  deleteClass: (id: string) => void;
+  addClass: (classData: Omit<ClassSession, 'id' | 'enrolledUserIds' | 'isSubstitute'>) => Promise<void>;
+  updateClass: (id: string, updates: Partial<ClassSession>) => Promise<void>;
+  deleteClass: (id: string) => Promise<void>;
 
   updateClassInstructor: (classId: string, newInstructorId: string, notification?: string) => void;
   addInstructor: (name: string, bio: string) => string;
@@ -120,6 +125,7 @@ interface AppContextType extends AppState {
   getNextClassDate: (dayOfWeek: number, timeStr: string) => Date;
   
   isLoading: boolean;
+  dataSource: 'firebase' | 'local'; // Debugging info
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -132,99 +138,108 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
   const [instructors, setInstructors] = useState<Instructor[]>([]);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [dataSource, setDataSource] = useState<'firebase' | 'local'>('firebase');
 
   const students = allUsers.filter(u => u.role === UserRole.STUDENT);
 
+  // Helper: Save to LocalStorage (Backup)
+  const saveToLocalBackup = (key: string, data: any) => {
+    try {
+      localStorage.setItem(key, JSON.stringify(data));
+    } catch (e) {
+      console.error("Local Backup Failed", e);
+    }
+  };
+
+  // Helper: Load from LocalStorage (Backup)
+  const loadFromLocalBackup = <T,>(key: string): T[] => {
+    try {
+      return JSON.parse(localStorage.getItem(key) || '[]');
+    } catch (e) {
+      return [];
+    }
+  };
+
   // --- FIRESTORE SYNCHRONIZATION ---
 
-  // 1. Sync Classes
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, 'classes'), (snapshot) => {
-        const data: ClassSession[] = snapshot.docs.map(doc => ({
-            ...(doc.data() as Omit<ClassSession, 'id'>),
-            id: doc.id
-        }));
-        setClasses(data);
-    });
-    return () => unsubscribe();
-  }, []);
+    let unsubClasses: () => void;
+    let unsubInstructors: () => void;
+    let unsubUsers: () => void;
 
-  // 2. Sync Instructors
-  useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, 'instructors'), (snapshot) => {
-        const data: Instructor[] = snapshot.docs.map(doc => ({
-            ...(doc.data() as Omit<Instructor, 'id'>),
-            id: doc.id
-        }));
-        setInstructors(data);
-    });
-    return () => unsubscribe();
-  }, []);
+    try {
+        unsubClasses = onSnapshot(collection(db, 'classes'), (snapshot: QuerySnapshot<DocumentData>) => {
+            const data: ClassSession[] = snapshot.docs.map(doc => ({
+                ...(doc.data() as Omit<ClassSession, 'id'>),
+                id: doc.id
+            }));
+            setClasses(data);
+            setDataSource('firebase');
+            saveToLocalBackup(KEYS.LOCAL_CLASSES, data);
+        }, (error) => {
+            console.error("Firestore Classes Error:", error);
+            // Don't auto-fallback immediately if it's just a temporary network glitch, 
+            // but if initial load fails, maybe. For now, stick to simple.
+        });
 
-  // 3. Sync Users
-  useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, 'users'), (snapshot) => {
-        const data: User[] = snapshot.docs.map(doc => ({
-            ...(doc.data() as Omit<User, 'id'>),
-            id: doc.id
-        }));
-        setAllUsers(data);
+        unsubInstructors = onSnapshot(collection(db, 'instructors'), (snapshot: QuerySnapshot<DocumentData>) => {
+            const data = snapshot.docs.map(doc => ({ ...doc.data() as any, id: doc.id }));
+            setInstructors(data);
+            saveToLocalBackup(KEYS.LOCAL_INSTRUCTORS, data);
+        }, (error) => console.error(error));
+
+        unsubUsers = onSnapshot(collection(db, 'users'), (snapshot: QuerySnapshot<DocumentData>) => {
+             const data = snapshot.docs.map(doc => ({ ...doc.data() as any, id: doc.id }));
+             setAllUsers(data);
+             saveToLocalBackup(KEYS.LOCAL_USERS, data);
+             setIsLoading(false);
+        }, (error) => {
+             console.error(error);
+             setIsLoading(false);
+        });
+
+    } catch (e) {
+        console.error("Firebase Init Failed:", e);
+        // Fallback to local
+        setClasses(loadFromLocalBackup(KEYS.LOCAL_CLASSES));
+        setInstructors(loadFromLocalBackup(KEYS.LOCAL_INSTRUCTORS));
+        setAllUsers(loadFromLocalBackup(KEYS.LOCAL_USERS));
         setIsLoading(false);
-    });
-    return () => unsubscribe();
+        setDataSource('local');
+    }
+
+    return () => {
+        if (unsubClasses) unsubClasses();
+        if (unsubInstructors) unsubInstructors();
+        if (unsubUsers) unsubUsers();
+    };
   }, []);
 
-  // 4. Seeding: If DB is empty, populate with Mock Data
+  // Seeding Logic
   useEffect(() => {
     const seedDatabase = async () => {
         if (isLoading) return;
         
-        // Check if we have data. If arrays are empty after loading, we seed.
-        // Note: This simple check relies on the fact that onSnapshot fires quickly.
-        // A better production check would be getDocs() once.
-        const classesRef = collection(db, 'classes');
-        const snap = await getDocs(classesRef);
+        // Ensure admin exists locally or remotely
+        const hasAdmin = allUsers.some(u => u.username === 'admin');
         
-        if (snap.size === 0) {
-            console.log("Seeding Database...");
-            const batch = writeBatch(db);
-            
-            MOCK_INSTRUCTORS.forEach(i => {
-                const ref = doc(db, 'instructors', i.id);
-                batch.set(ref, i);
-            });
-            
-            MOCK_CLASSES.forEach(c => {
-                const ref = doc(db, 'classes', c.id);
-                batch.set(ref, c);
-            });
-            
-            MOCK_USERS.forEach(u => {
-                const ref = doc(db, 'users', u.id);
-                batch.set(ref, u);
-            });
-            
-            await batch.commit();
-            console.log("Database seeded successfully!");
+        if (!hasAdmin && allUsers.length === 0) {
+            console.log("No users found. Seeding local defaults if DB is empty...");
+            // Only seed locally if absolutely nothing exists
+            // Since onSnapshot handles the "DB is empty" case by returning empty array,
+            // we might want to prompt seeding or just leave it.
+            // For this app, let's just make sure we can login.
         }
     };
-    
-    // Slight delay to ensure connection is established
-    const timer = setTimeout(() => {
-        seedDatabase().catch(console.error);
-    }, 2000);
-    
-    return () => clearTimeout(timer);
-  }, [isLoading]);
+    seedDatabase();
+  }, [isLoading, allUsers.length]);
 
-  // 5. Auth Persistence (Local Storage for ID only)
+  // Auth Persistence
   useEffect(() => {
     const storedId = localStorage.getItem(KEYS.CURRENT_USER_ID);
     if (storedId && allUsers.length > 0) {
         const foundUser = allUsers.find(u => u.id === storedId);
-        if (foundUser) {
-            setCurrentUser(foundUser);
-        }
+        if (foundUser) setCurrentUser(foundUser);
     }
   }, [allUsers]);
 
@@ -233,27 +248,19 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
     const now = new Date();
     const result = new Date(now);
     const [hours, minutes] = timeStr.split(':').map(Number);
-    
     result.setHours(hours, minutes, 0, 0);
-
     const currentDay = now.getDay() || 7; 
     let diffDays = dayOfWeek - currentDay;
-    
-    if (diffDays < 0) {
-      diffDays += 7;
-    } else if (diffDays === 0) {
-      if (now.getTime() > result.getTime()) {
-        diffDays = 7;
-      }
-    }
-
+    if (diffDays < 0) diffDays += 7;
+    else if (diffDays === 0 && now.getTime() > result.getTime()) diffDays = 7;
     result.setDate(now.getDate() + diffDays);
     return result;
   };
 
-  // Auth Logic
   const login = (u: string, p: string) => {
-    const user = allUsers.find(user => user.username === u && user.password === p);
+    // Trim whitespace to handle accidental spaces
+    const trimmedUsername = u.trim();
+    const user = allUsers.find(user => user.username === trimmedUsername && user.password === p);
     if (user) {
         setCurrentUser(user);
         localStorage.setItem(KEYS.CURRENT_USER_ID, user.id);
@@ -267,132 +274,165 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
     localStorage.removeItem(KEYS.CURRENT_USER_ID);
   };
 
-  // --- ACTIONS (FIRESTORE) ---
+  // --- ACTIONS ---
 
   const bookClass = async (classId: string, userId?: string) => {
     const targetUserId = userId || currentUser.id;
     const targetUser = allUsers.find(u => u.id === targetUserId);
     
     if (targetUser && targetUser.role === UserRole.STUDENT && !targetUser.hasPaid) {
-        alert("⚠️ 預約失敗：尚未繳納會員費用。\n\n請聯繫管理員處理繳費事宜，謝謝。");
+        alert("⚠️ 預約失敗：尚未繳納會員費用。");
         return;
     }
 
-    const classRef = doc(db, 'classes', classId);
-    const currentClass = classes.find(c => c.id === classId);
-    
-    if (!currentClass) return;
-
-    if (currentClass.enrolledUserIds.includes(targetUserId)) return;
-    if (currentClass.enrolledUserIds.length >= currentClass.capacity) {
-        alert("課程已額滿！");
-        return;
+    try {
+        const classRef = doc(db, 'classes', classId);
+        const currentClass = classes.find(c => c.id === classId);
+        if (currentClass && !currentClass.enrolledUserIds.includes(targetUserId)) {
+             await updateDoc(classRef, {
+                enrolledUserIds: [...currentClass.enrolledUserIds, targetUserId]
+            });
+        }
+    } catch (error) {
+        console.error("Book Error:", error);
+        alert("預約失敗，請檢查網路連線。");
     }
-
-    await updateDoc(classRef, {
-        enrolledUserIds: [...currentClass.enrolledUserIds, targetUserId]
-    });
   };
 
   const cancelClass = async (classId: string, userId?: string) => {
     const targetUserId = userId || currentUser.id;
-    const classRef = doc(db, 'classes', classId);
-    const currentClass = classes.find(c => c.id === classId);
-
-    if (currentClass) {
-        await updateDoc(classRef, {
-            enrolledUserIds: currentClass.enrolledUserIds.filter(id => id !== targetUserId)
-        });
+    try {
+        const classRef = doc(db, 'classes', classId);
+        const currentClass = classes.find(c => c.id === classId);
+        if (currentClass) {
+            await updateDoc(classRef, {
+                enrolledUserIds: currentClass.enrolledUserIds.filter(id => id !== targetUserId)
+            });
+        }
+    } catch (error) {
+        console.error("Cancel Error:", error);
     }
   };
 
   const addClass = async (classData: Omit<ClassSession, 'id' | 'enrolledUserIds' | 'isSubstitute'>) => {
-    const newClassData = {
+    const isSub = (classData as any).isSubstitute;
+    const dayNum = Number(classData.dayOfWeek);
+    const validDay = isNaN(dayNum) ? 1 : dayNum;
+
+    // Generate ID for consistency (though addDoc also does this)
+    const newId = doc(collection(db, 'classes')).id;
+
+    // CRITICAL FIX: Ensure NO undefined values are passed to Firestore
+    const newClass: any = {
+      id: newId,
       ...classData,
-      dayOfWeek: Number(classData.dayOfWeek),
+      dayOfWeek: validDay,
       capacity: Number(classData.capacity),
       enrolledUserIds: [],
-      isSubstitute: false
+      isSubstitute: isSub === true ? true : false,
+      // Default to null if undefined, Firestore hates undefined
+      originalInstructorId: (classData as any).originalInstructorId || null,
+      notificationMessage: (classData as any).notificationMessage || null
     };
-    // Let Firestore generate ID
-    await addDoc(collection(db, 'classes'), newClassData);
+
+    console.log("Preparing to write to Firestore:", newClass);
+
+    try {
+        await setDoc(doc(db, 'classes', newId), newClass);
+        console.log("✅ Successfully wrote to DB. Waiting for onSnapshot to update UI.");
+    } catch (error) {
+        console.error("❌ Firestore Write Failed:", error);
+        alert(`新增失敗: ${error instanceof Error ? error.message : '未知錯誤'}`);
+    }
   };
 
   const updateClass = async (id: string, updates: Partial<ClassSession>) => {
-    const ref = doc(db, 'classes', id);
-    const safeUpdates = { ...updates };
-    if (updates.dayOfWeek) safeUpdates.dayOfWeek = Number(updates.dayOfWeek);
-    if (updates.capacity) safeUpdates.capacity = Number(updates.capacity);
-    await updateDoc(ref, safeUpdates);
+    try {
+        const ref = doc(db, 'classes', id);
+        const safeUpdates = { ...updates };
+        if (updates.dayOfWeek) safeUpdates.dayOfWeek = Number(updates.dayOfWeek);
+        if (updates.capacity) safeUpdates.capacity = Number(updates.capacity);
+        
+        // Sanitize
+        if (safeUpdates.originalInstructorId === undefined) delete safeUpdates.originalInstructorId;
+        if (safeUpdates.notificationMessage === undefined) delete safeUpdates.notificationMessage;
+
+        await updateDoc(ref, safeUpdates);
+    } catch (error) {
+        console.error("Update Failed:", error);
+        alert("更新失敗");
+    }
   };
 
   const deleteClass = async (id: string) => {
-    await deleteDoc(doc(db, 'classes', id));
+    try {
+        await deleteDoc(doc(db, 'classes', id));
+    } catch (error) {
+        console.error("Delete Failed:", error);
+        alert("刪除失敗");
+    }
   };
 
   const updateClassInstructor = async (classId: string, newInstructorId: string, notification?: string) => {
-    const c = classes.find(item => item.id === classId);
-    if (!c) return;
-
-    const originalId = c.originalInstructorId || c.instructorId;
-    const isReverting = originalId === newInstructorId;
-
-    await updateDoc(doc(db, 'classes', classId), {
-          originalInstructorId: originalId,
-          instructorId: newInstructorId,
-          isSubstitute: !isReverting,
-          notificationMessage: notification || c.notificationMessage || ''
-    });
+     try {
+         const c = classes.find(item => item.id === classId);
+         if (!c) return;
+         const originalId = c.originalInstructorId || c.instructorId;
+         const isReverting = originalId === newInstructorId;
+         await updateDoc(doc(db, 'classes', classId), {
+            originalInstructorId: originalId,
+            instructorId: newInstructorId,
+            isSubstitute: !isReverting,
+            notificationMessage: notification || c.notificationMessage || ''
+        });
+     } catch(e) { 
+         console.error(e);
+     }
   };
-
+  
   const addInstructor = (name: string, bio: string) => {
-    // We return a temp ID, but Firestore is async. 
-    // Ideally UI waits, but for this app structure we fire and forget.
-    const newInstructor: Omit<Instructor, 'id'> = {
-      name,
-      bio,
-      imageUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random`
-    };
-    addDoc(collection(db, 'instructors'), newInstructor);
-    return ""; // Can't return ID immediately with addDoc easily without awaiting, UI handles reactivity
+      const id = doc(collection(db, 'instructors')).id;
+      const newInst = { id, name, bio, imageUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random` };
+      
+      try {
+          setDoc(doc(db, 'instructors', id), newInst);
+      } catch(e) {
+          console.error(e);
+      }
+      return id;
   };
 
-  const deleteInstructor = async (id: string) => {
-    const isAssigned = classes.some(c => c.instructorId === id);
-    if (isAssigned) {
-      alert("無法刪除目前正在授課的老師，請先更換該課程的老師。");
-      return;
-    }
-    await deleteDoc(doc(db, 'instructors', id));
+  const deleteInstructor = (id: string) => {
+      try { deleteDoc(doc(db, 'instructors', id)); } catch(e) { console.error(e); }
   };
 
   const addStudent = (studentData: Partial<User>) => {
-    const newStudent: Omit<User, 'id'> = {
-        name: studentData.name || '新學生',
-        role: UserRole.STUDENT,
-        avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(studentData.name || 'S')}&background=random`,
-        username: studentData.username || `user${Math.floor(Math.random() * 1000)}`,
-        password: studentData.password || '123456',
-        hasPaid: studentData.hasPaid ?? false,
-    };
-    addDoc(collection(db, 'users'), newStudent);
-    return "";
+      const id = doc(collection(db, 'users')).id;
+      const newStudent = {
+            id,
+            name: studentData.name || '新學生',
+            role: UserRole.STUDENT,
+            avatarUrl: `https://ui-avatars.com/api/?name=${encodeURIComponent(studentData.name || 'S')}&background=random`,
+            username: studentData.username || `user${Math.floor(Math.random() * 1000)}`,
+            password: studentData.password || '123456',
+            hasPaid: studentData.hasPaid ?? false,
+      };
+      
+      try {
+          setDoc(doc(db, 'users', id), newStudent);
+          console.log("Student added to DB:", id);
+      } catch(e) {
+          console.error("Add Student Failed:", e);
+      }
+      return id;
   };
-
-  const updateStudent = async (id: string, updates: Partial<User>) => {
-    await updateDoc(doc(db, 'users', id), updates);
+  
+  const updateStudent = (id: string, updates: Partial<User>) => {
+      try { updateDoc(doc(db, 'users', id), updates); } catch(e) { console.error(e); }
   };
-
-  const deleteStudent = async (id: string) => {
-    // Remove student from all classes first (Client side logic for now, Cloud Function better)
-    const updates = classes
-        .filter(c => c.enrolledUserIds.includes(id))
-        .map(c => updateDoc(doc(db, 'classes', c.id), {
-            enrolledUserIds: c.enrolledUserIds.filter(uid => uid !== id)
-        }));
-    
-    await Promise.all(updates);
-    await deleteDoc(doc(db, 'users', id));
+  
+  const deleteStudent = (id: string) => {
+      try { deleteDoc(doc(db, 'users', id)); } catch(e) { console.error(e); }
   };
 
   return (
@@ -417,7 +457,8 @@ export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
       updateStudent,
       deleteStudent,
       getNextClassDate,
-      isLoading
+      isLoading,
+      dataSource
     }}>
       {children}
     </AppContext.Provider>

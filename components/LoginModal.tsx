@@ -97,7 +97,6 @@ export const LoginModal: React.FC<Props> = ({ isOpen, onClose }) => {
             <div className="mt-6 text-center">
                 <p className="text-xs text-gray-400 mb-2">測試帳號提示：</p>
                 <div className="flex justify-center gap-3 text-xs">
-                    <code className="bg-gray-100 px-2 py-1 rounded text-gray-600">admin / password</code>
                     <code className="bg-gray-100 px-2 py-1 rounded text-gray-600">alice / 123</code>
                 </div>
             </div>

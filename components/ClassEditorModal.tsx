@@ -1,15 +1,15 @@
+
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../contexts/AppContext';
-import { X, Save, Trash2, MapPin, Users, BarChart, AlertTriangle, Clock, Calendar, UserCheck } from 'lucide-react';
+import { X, Save, Trash2, MapPin, Users, BarChart, AlertTriangle, Clock, Calendar, UserCheck, Loader2 } from 'lucide-react';
 
 interface Props {
   classId?: string | null;
-  initialDayOfWeek?: number; // New prop for pre-filling the day
+  initialDayOfWeek?: number; 
   onClose: () => void;
 }
 
-// Helper for input groups using Flexbox for robust click handling
-// This avoids absolute positioning overlaps which can block date/time pickers
+// Helper for input groups
 const InputGroup = ({ label, icon: Icon, children }: { label: string, icon?: React.ElementType, children?: React.ReactNode }) => (
   <div>
       <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{label}</label>
@@ -29,9 +29,9 @@ const InputGroup = ({ label, icon: Icon, children }: { label: string, icon?: Rea
 export const ClassEditorModal: React.FC<Props> = ({ classId, initialDayOfWeek, onClose }) => {
   const { classes, addClass, updateClass, deleteClass, instructors } = useApp();
   
-  // Find the live class object from context if ID is provided
   const existingClass = classId ? classes.find(c => c.id === classId) : undefined;
   
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     title: '',
     dayOfWeek: 1, 
@@ -46,7 +46,6 @@ export const ClassEditorModal: React.FC<Props> = ({ classId, initialDayOfWeek, o
 
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-  // Populate form when existingClass is found, or reset for new
   useEffect(() => {
     if (existingClass) {
       setFormData({
@@ -61,10 +60,9 @@ export const ClassEditorModal: React.FC<Props> = ({ classId, initialDayOfWeek, o
         isSubstitute: existingClass.isSubstitute
       });
     } else {
-       // Deep reset for new class
        setFormData({
             title: '',
-            dayOfWeek: initialDayOfWeek || 1, // Use prop
+            dayOfWeek: initialDayOfWeek || 1,
             startTimeStr: '10:00',
             durationMinutes: 60,
             instructorId: instructors[0]?.id || '',
@@ -74,28 +72,36 @@ export const ClassEditorModal: React.FC<Props> = ({ classId, initialDayOfWeek, o
             isSubstitute: false
        });
     }
-  }, [existingClass, initialDayOfWeek, instructors]); // Run whenever ID changes or modal opens for new day
+  }, [existingClass, initialDayOfWeek]); 
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsSubmitting(true);
+    
     const submitData = {
         ...formData,
-        // Ensure we handle the logic if marked as substitute manually
         originalInstructorId: formData.isSubstitute ? (existingClass?.originalInstructorId || existingClass?.instructorId) : undefined
     };
 
-    if (existingClass) {
-      updateClass(existingClass.id, submitData);
-    } else {
-      addClass(submitData);
+    try {
+        if (existingClass) {
+            await updateClass(existingClass.id, submitData);
+        } else {
+            await addClass(submitData);
+        }
+        // Small delay to let React process the optimistic update
+        setTimeout(onClose, 50);
+    } catch (e) {
+        console.error(e);
+        setIsSubmitting(false);
     }
-    onClose();
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (existingClass) {
-      deleteClass(existingClass.id);
-      onClose();
+      setIsSubmitting(true);
+      await deleteClass(existingClass.id);
+      setTimeout(onClose, 50);
     }
   };
 
@@ -106,7 +112,7 @@ export const ClassEditorModal: React.FC<Props> = ({ classId, initialDayOfWeek, o
           <h2 className="text-xl font-bold text-gray-800">
             {existingClass ? '編輯每週課程' : '新增每週課程'}
           </h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+          <button onClick={onClose} disabled={isSubmitting} className="text-gray-400 hover:text-gray-600 disabled:opacity-50">
             <X size={24} />
           </button>
         </div>
@@ -121,6 +127,7 @@ export const ClassEditorModal: React.FC<Props> = ({ classId, initialDayOfWeek, o
               onChange={e => setFormData({...formData, title: e.target.value})}
               className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-zen-500 outline-none text-gray-900 bg-white"
               placeholder="例如：晨間瑜伽"
+              disabled={isSubmitting}
             />
           </div>
 
@@ -131,6 +138,7 @@ export const ClassEditorModal: React.FC<Props> = ({ classId, initialDayOfWeek, o
                   value={formData.dayOfWeek}
                   onChange={e => setFormData({...formData, dayOfWeek: parseInt(e.target.value, 10)})}
                   className="w-full p-2.5 bg-transparent outline-none text-gray-900 cursor-pointer [color-scheme:light]"
+                  disabled={isSubmitting}
                 >
                     <option value={1}>週一</option>
                     <option value={2}>週二</option>
@@ -149,6 +157,7 @@ export const ClassEditorModal: React.FC<Props> = ({ classId, initialDayOfWeek, o
                     value={formData.startTimeStr}
                     onChange={e => setFormData({...formData, startTimeStr: e.target.value})}
                     className="w-full p-2.5 bg-transparent outline-none text-gray-900 cursor-pointer [color-scheme:light]"
+                    disabled={isSubmitting}
                   />
             </InputGroup>
           </div>
@@ -164,6 +173,7 @@ export const ClassEditorModal: React.FC<Props> = ({ classId, initialDayOfWeek, o
                 value={formData.durationMinutes}
                 onChange={e => setFormData({...formData, durationMinutes: parseInt(e.target.value)})}
                 className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-zen-500 outline-none text-gray-900 bg-white"
+                disabled={isSubmitting}
               />
             </div>
             <div>
@@ -172,6 +182,7 @@ export const ClassEditorModal: React.FC<Props> = ({ classId, initialDayOfWeek, o
                 value={formData.instructorId}
                 onChange={e => setFormData({...formData, instructorId: e.target.value})}
                 className="w-full p-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-zen-500 outline-none bg-white text-gray-900 cursor-pointer"
+                disabled={isSubmitting}
              >
                 {instructors.map(i => (
                   <option key={i.id} value={i.id}>{i.name}</option>
@@ -188,6 +199,7 @@ export const ClassEditorModal: React.FC<Props> = ({ classId, initialDayOfWeek, o
                 checked={formData.isSubstitute}
                 onChange={e => setFormData({...formData, isSubstitute: e.target.checked})}
                 className="w-4 h-4 text-zen-600 rounded focus:ring-zen-500 border-gray-300 cursor-pointer"
+                disabled={isSubmitting}
              />
              <label htmlFor="isSubstitute" className="text-sm font-semibold text-gray-700 select-none cursor-pointer flex items-center gap-1.5 flex-1">
                 <UserCheck size={16} className="text-zen-600" />
@@ -204,6 +216,7 @@ export const ClassEditorModal: React.FC<Props> = ({ classId, initialDayOfWeek, o
                     value={formData.capacity}
                     onChange={e => setFormData({...formData, capacity: parseInt(e.target.value)})}
                     className="w-full p-2.5 bg-transparent outline-none text-gray-900"
+                    disabled={isSubmitting}
                   />
              </InputGroup>
              <InputGroup label="地點" icon={MapPin}>
@@ -212,6 +225,7 @@ export const ClassEditorModal: React.FC<Props> = ({ classId, initialDayOfWeek, o
                     value={formData.location}
                     onChange={e => setFormData({...formData, location: e.target.value})}
                     className="w-full p-2.5 bg-transparent outline-none text-gray-900 cursor-pointer"
+                    disabled={isSubmitting}
                   >
                     <option value="A 教室">A 教室</option>
                     <option value="B 教室">B 教室</option>
@@ -227,6 +241,7 @@ export const ClassEditorModal: React.FC<Props> = ({ classId, initialDayOfWeek, o
                     value={formData.difficulty}
                     onChange={e => setFormData({...formData, difficulty: e.target.value as any})}
                     className="w-full p-2.5 bg-transparent outline-none text-gray-900 cursor-pointer"
+                    disabled={isSubmitting}
                 >
                     <option value="Beginner">初學者</option>
                     <option value="Intermediate">中級</option>
@@ -241,6 +256,7 @@ export const ClassEditorModal: React.FC<Props> = ({ classId, initialDayOfWeek, o
                      <button 
                        type="button"
                        onClick={() => setShowDeleteConfirm(false)}
+                       disabled={isSubmitting}
                        className="px-3 py-2 rounded-lg text-gray-600 bg-gray-100 text-sm font-medium hover:bg-gray-200 transition-colors"
                      >
                         取消
@@ -248,9 +264,10 @@ export const ClassEditorModal: React.FC<Props> = ({ classId, initialDayOfWeek, o
                      <button 
                        type="button"
                        onClick={handleDelete}
+                       disabled={isSubmitting}
                        className="px-3 py-2 rounded-lg text-white bg-red-600 text-sm font-medium hover:bg-red-700 flex items-center gap-1 shadow-md transition-colors"
                      >
-                        <AlertTriangle size={16} />
+                        {isSubmitting ? <Loader2 size={16} className="animate-spin"/> : <Trash2 size={16} />}
                         確認刪除
                      </button>
                   </div>
@@ -258,6 +275,7 @@ export const ClassEditorModal: React.FC<Props> = ({ classId, initialDayOfWeek, o
                   <button 
                     type="button"
                     onClick={() => setShowDeleteConfirm(true)}
+                    disabled={isSubmitting}
                     className="text-red-500 hover:bg-red-50 px-3 py-2.5 rounded-lg flex items-center gap-2 text-sm font-medium transition-colors"
                   >
                     <Trash2 size={18} />
@@ -270,9 +288,10 @@ export const ClassEditorModal: React.FC<Props> = ({ classId, initialDayOfWeek, o
             
             <button 
               type="submit"
-              className="bg-zen-600 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-zen-700 shadow-lg shadow-zen-200 flex items-center gap-2 transition-transform active:scale-95"
+              disabled={isSubmitting}
+              className="bg-zen-600 text-white px-6 py-2.5 rounded-xl font-bold hover:bg-zen-700 shadow-lg shadow-zen-200 flex items-center gap-2 transition-transform active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed"
             >
-              <Save size={18} />
+              {isSubmitting ? <Loader2 size={18} className="animate-spin"/> : <Save size={18} />}
               {existingClass ? '儲存變更' : '建立課程'}
             </button>
           </div>
