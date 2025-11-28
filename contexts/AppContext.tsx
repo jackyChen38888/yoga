@@ -1,8 +1,27 @@
 
-import React, { createContext, useContext, useState, PropsWithChildren } from 'react';
+import React, { createContext, useContext, useState, useEffect, PropsWithChildren } from 'react';
 import { AppState, ClassSession, Instructor, User, UserRole } from '../types';
 
-// Mock Data
+// Storage Keys
+const KEYS = {
+  USERS: 'zenflow_users_v1',
+  CLASSES: 'zenflow_classes_v1',
+  INSTRUCTORS: 'zenflow_instructors_v1',
+  CURRENT_USER: 'zenflow_current_user_v1'
+};
+
+// Helper to load from storage or fallback to default
+const loadFromStorage = <T,>(key: string, defaultValue: T): T => {
+  try {
+    const stored = localStorage.getItem(key);
+    return stored ? JSON.parse(stored) : defaultValue;
+  } catch (e) {
+    console.warn(`Failed to load ${key} from storage`, e);
+    return defaultValue;
+  }
+};
+
+// Mock Data (Default Fallback)
 const MOCK_INSTRUCTORS: Instructor[] = [
   { id: 'i1', name: 'Sarah Jenks', bio: '流動瑜伽專家', imageUrl: 'https://picsum.photos/100/100?random=1' },
   { id: 'i2', name: 'David Chen', bio: '哈達瑜伽與冥想', imageUrl: 'https://picsum.photos/100/100?random=2' },
@@ -10,7 +29,6 @@ const MOCK_INSTRUCTORS: Instructor[] = [
   { id: 'i4', name: 'Marcus Cole', bio: '修復瑜伽專門', imageUrl: 'https://picsum.photos/100/100?random=4' },
 ];
 
-// Weekly Schedule Mock Data
 const MOCK_CLASSES: ClassSession[] = [
   {
     id: 'c1',
@@ -107,13 +125,33 @@ interface AppContextType extends AppState {
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<PropsWithChildren<{}>> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<User>(GUEST_USER);
+  // Initialize state from LocalStorage if available, otherwise use MOCK data
+  const [currentUser, setCurrentUser] = useState<User>(() => loadFromStorage(KEYS.CURRENT_USER, GUEST_USER));
   const [isLoginModalOpen, setLoginModalOpen] = useState(false);
-  const [classes, setClasses] = useState<ClassSession[]>(MOCK_CLASSES);
-  const [instructors, setInstructors] = useState<Instructor[]>(MOCK_INSTRUCTORS);
-  const [allUsers, setAllUsers] = useState<User[]>(USERS);
+  
+  const [classes, setClasses] = useState<ClassSession[]>(() => loadFromStorage(KEYS.CLASSES, MOCK_CLASSES));
+  const [instructors, setInstructors] = useState<Instructor[]>(() => loadFromStorage(KEYS.INSTRUCTORS, MOCK_INSTRUCTORS));
+  const [allUsers, setAllUsers] = useState<User[]>(() => loadFromStorage(KEYS.USERS, USERS));
 
   const students = allUsers.filter(u => u.role === UserRole.STUDENT);
+
+  // Persistence Effects: Save to LocalStorage whenever state changes
+  useEffect(() => {
+    localStorage.setItem(KEYS.CURRENT_USER, JSON.stringify(currentUser));
+  }, [currentUser]);
+
+  useEffect(() => {
+    localStorage.setItem(KEYS.CLASSES, JSON.stringify(classes));
+  }, [classes]);
+
+  useEffect(() => {
+    localStorage.setItem(KEYS.INSTRUCTORS, JSON.stringify(instructors));
+  }, [instructors]);
+
+  useEffect(() => {
+    localStorage.setItem(KEYS.USERS, JSON.stringify(allUsers));
+  }, [allUsers]);
+
 
   const getNextClassDate = (dayOfWeek: number, timeStr: string): Date => {
     const now = new Date();

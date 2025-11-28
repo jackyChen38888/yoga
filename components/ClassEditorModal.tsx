@@ -10,7 +10,7 @@ interface Props {
 
 // Helper for input groups using Flexbox for robust click handling
 // This avoids absolute positioning overlaps which can block date/time pickers
-const InputGroup = ({ label, icon: Icon, children }: { label: string, icon?: React.ElementType, children: React.ReactNode }) => (
+const InputGroup = ({ label, icon: Icon, children }: { label: string, icon?: React.ElementType, children?: React.ReactNode }) => (
   <div>
       <label className="block text-xs font-bold text-gray-500 uppercase mb-1">{label}</label>
       <div className="flex items-center border border-gray-300 rounded-lg focus-within:ring-2 focus-within:ring-zen-500 bg-white overflow-hidden transition-all hover:border-gray-400">
